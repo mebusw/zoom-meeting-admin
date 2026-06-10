@@ -95,6 +95,7 @@ python3 zoom-s2s.py list_users [page_size]
 | 获取会议详情 | `get_meeting <id>` |
 | 删除会议 | `delete_meeting <id> --yes` |
 | 获取云录像 | `recordings <user> 10` |
+| 创建 5月23日-24日 的会议 |  （连续的日子则按周期性会议创建为同一个会议）|
 
 ## 最小权限配置建议
 
