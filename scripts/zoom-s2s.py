@@ -139,11 +139,12 @@ def list_meetings(user=None, page_size=10, meeting_type="upcoming"):
 def get_meeting(meeting_id):
     return api_call("GET", f"/meetings/{meeting_id}")
 
-def create_meeting(topic, start_time, duration=60, timezone="Asia/Shanghai", password=None):
+def create_meeting(topic, start_time, duration=60, timezone="Asia/Shanghai", password=None,
+                    recurrence_type=None, repeat_interval=1, weekly_days=None, end_times=None, end_date_time=None):
     user = ZOOM_USER_ID
     payload = {
         "topic": topic,
-        "type": 2,
+        "type": 8 if recurrence_type else 2,
         "start_time": start_time,
         "duration": duration,
         "timezone": timezone,
@@ -156,6 +157,15 @@ def create_meeting(topic, start_time, duration=60, timezone="Asia/Shanghai", pas
     }
     if password:
         payload["password"] = password
+    if recurrence_type:
+        rec = {"type": recurrence_type, "repeat_interval": repeat_interval}
+        if weekly_days is not None:
+            rec["weekly_days"] = str(weekly_days)
+        if end_times is not None:
+            rec["end_times"] = int(end_times)
+        if end_date_time:
+            rec["end_date_time"] = end_date_time
+        payload["recurrence"] = rec
     return api_call("POST", f"/users/{urllib.parse.quote(user)}/meetings", payload)
 
 def delete_meeting(meeting_id):
@@ -180,7 +190,9 @@ def help():
   list_meetings   [user] [page_size] [type]     列出会议 (type: upcoming/past/live)
   get_meeting     <meeting_id>                  获取单个会议详情
   create_meeting  <topic> <start_time> <duration> [timezone] [password]
+                  [recurrence_type] [repeat_interval] [weekly_days] [end_times] [end_date_time]
                                                   创建会议 (start_time: YYYY-MM-DDTHH:MM:SS)
+                                                  支持周期性会议：recurrence_type=2(每周), weekly_days="1-7", end_times=次数
   delete_meeting  <meeting_id> --yes              删除会议（需 --yes 确认）
   get_user        [user_id]                     获取用户信息
   list_users      [page_size]                   列出账户下所有用户
@@ -193,6 +205,9 @@ def help():
 
   # 创建明天早上10点会议
   python3 zoom-s2s.py create_meeting "煎饼果子讨论会" "2026-05-05T10:00:00" 60 Asia/Shanghai
+
+  # 创建周期性会议（每周二 20:00，7次，2小时）
+  python3 zoom-s2s.py create_meeting "北美龙虾 AI 数字员工系列第 2 期" "2026-08-18T20:00:00" 120 America/New_York "" 2 1 2 7
 
   # 获取云录像
   python3 zoom-s2s.py recordings service@uperform.cn 10
@@ -232,7 +247,13 @@ def main():
         duration = int(args[2]) if len(args) > 2 else 60
         timezone = args[3] if len(args) > 3 else "Asia/Shanghai"
         password = args[4] if len(args) > 4 else None
-        result = create_meeting(topic, start_time, duration, timezone, password)
+        recurrence_type = int(args[5]) if len(args) > 5 else None
+        repeat_interval = int(args[6]) if len(args) > 6 else 1
+        weekly_days = args[7] if len(args) > 7 else None
+        end_times = int(args[8]) if len(args) > 8 else None
+        end_date_time = args[9] if len(args) > 9 else None
+        result = create_meeting(topic, start_time, duration, timezone, password,
+                               recurrence_type, repeat_interval, weekly_days, end_times, end_date_time)
 
     elif action == "delete_meeting":
         if len(args) < 1:

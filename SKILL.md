@@ -66,6 +66,8 @@ python3 zoom-s2s.py get_meeting <meeting_id>
 
 # 创建会议 (start_time: YYYY-MM-DDTHH:MM:SS)
 python3 zoom-s2s.py create_meeting "<主题>" "<start_time>" <时长分钟> [时区] [密码]
+# 创建周期性会议（每周二，7次，每次120分钟）
+python3 zoom-s2s.py create_meeting "CSM公开课" "2026-05-23T08:00:00" 120 Asia/Shanghai "" 2 1 2 7
 python3 zoom-s2s.py create_meeting "煎饼果子讨论会" "2026-05-05T10:00:00" 60 Asia/Shanghai
 
 # 删除会议
@@ -92,10 +94,10 @@ python3 zoom-s2s.py list_users [page_size]
 | 列出最近5个会议 | `list_meetings <user> 5 upcoming` |
 | 列出最近10个历史会议 | `list_meetings <user> 10 past` |
 | 创建明天10点会议 | `create_meeting "主题" "YYYY-MM-DDT10:00:00" 60 Asia/Shanghai` |
+| 创建周期性会议 | `create_meeting "主题" "YYYY-MM-DDT20:00:00" 120 America/New_York "" 2 1 2 7` |
 | 获取会议详情 | `get_meeting <id>` |
 | 删除会议 | `delete_meeting <id> --yes` |
 | 获取云录像 | `recordings <user> 10` |
-| 创建 5月23日-24日 的会议 |  （连续的日子则按周期性会议创建为同一个会议）|
 
 ## 最小权限配置建议
 
@@ -120,6 +122,31 @@ python3 zoom-s2s.py list_users [page_size]
 
 ## 创建周期性会议
 
+### CLI 方式
+
+`create_meeting` 额外支持周期性参数（按位置传递）：
+
+```bash
+python3 zoom-s2s.py create_meeting "<主题>" "<start_time>" <duration> [timezone] [password] \
+  [recurrence_type] [repeat_interval] [weekly_days] [end_times] [end_date_time]
+```
+
+| 参数 | 说明 | 示例 |
+|------|------|------|
+| `recurrence_type` | 1=每日, 2=每周, 3=每月 | `2` |
+| `repeat_interval` | 每几周/天重复 | `1` |
+| `weekly_days` | 周几（字符串，1=周一~7=周日）| `"2"` |
+| `end_times` | 总共几次 | `7` |
+| `end_date_time` | 结束日期（二选一）| `"2026-10-06T00:00:00Z"` |
+
+**示例：每周二 20:00，共 7 次，每次 2 小时**
+```bash
+python3 zoom-s2s.py create_meeting "北美龙虾 AI 数字员工系列第 2 期" \
+  "2026-08-18T20:00:00" 120 America/New_York "" 2 1 2 7
+```
+
+### API Payload 方式
+
 创建 `type=8`（周期性会议）的 `recurrence` 参数说明：
 
 | recurrence.type | 说明 | 可用字段 | 是否可用 |
@@ -138,7 +165,7 @@ python3 zoom-s2s.py list_users [page_size]
 
 **weekly_days 取值**：1=周一 ~ 7=周日
 
-**示例**：创建 5月23日-24日（周六日）的周期性会议：
+**示例**：通过 `api_call` 直接 POST 创建周期性会议：
 ```python
 payload = {
     "topic": "CSM公开课",
