@@ -2,8 +2,16 @@
 name: zoom-meeting-admin
 allowed-tools: Bash(python3:*) Bash(ls:*) Bash(cat:*) Read
 compatibility: Requires Python 3.7+, network access to zoom.us and api.zoom.us, and a local .env with Zoom Server-to-Server OAuth credentials.
-description: Manage Zoom meetings, cloud recordings, and account users via a Server-to-Server OAuth REST script. Use this skill when the user wants to list, view, create, or delete a scheduled Zoom meeting; query cloud recordings for a user; or look up account users. Actions are restricted to a fixed list (list/get/create/delete meeting, get/list user, list recordings) — the script does not perform arbitrary Zoom API calls. create_meeting and delete_meeting require explicit user confirmation before execution. Requires a Zoom Server-to-Server OAuth app and a local .env with ACCOUNT_ID, CLIENT_ID, CLIENT_SECRET, USER_ID.
+description: Manage Zoom meetings, cloud recordings, and account users via a Server-to-Server OAuth REST script. Use this skill when the user wants to list, view, create, or delete a scheduled Zoom meeting; query cloud recordings for a user; or look up account users. The script exposes a fixed CLI action whitelist (list/get/create/delete meeting, get/list user, list recordings); agents must only invoke these documented actions and must not modify the script, import internal functions, or construct arbitrary Zoom API requests. create_meeting requires the agent to obtain explicit user confirmation of topic, start_time, and duration before invoking. delete_meeting is gated by a required --yes flag and the agent must display the meeting info and obtain explicit user confirmation before invoking. Requires a Zoom Server-to-Server OAuth app and a local .env with ACCOUNT_ID, CLIENT_ID, CLIENT_SECRET, USER_ID.
 ---
+
+> ⚠️ **安全提示 — 凭证等同于账户管理员口令**
+>
+> 本 Skill 通过 `.env` 中的 `ZOOM_CLIENT_SECRET` 等 Server-to-Server OAuth 凭证访问 Zoom 账户。
+> `ACCOUNT_ID + CLIENT_ID + CLIENT_SECRET` 三元组可换取 1 小时有效的账户级访问令牌，**能够读取该账户下所有会议元数据、云录像，并执行删除等破坏性操作**。
+>
+> **使用前请先完整阅读 [`## 凭证安全`](#凭证安全)**，遵守 `.gitignore`、`chmod 600`、最小 scope、专用 App、泄露应急等要求。
+> 任何**修改脚本、import 内部函数、构造任意 payload 调用 `api_call`** 的尝试都构成越权，会被本文档明确禁止。
 
 # Zoom Server-to-Server OAuth REST API
 
@@ -19,7 +27,12 @@ description: Manage Zoom meetings, cloud recordings, and account users via a Ser
   - 会议：`list_meetings` / `get_meeting` / `create_meeting` / `delete_meeting`
   - 用户：`get_user` / `list_users`
   - 录像：`recordings`
-- **越权防护**：脚本未导出 `api_call` 给上层调用；不得通过修改脚本、注入参数、拼接 URL 等方式旁路调用白名单外的 Zoom 端点（如 `DELETE /users/{id}`、`PATCH /accounts/{id}` 等高风险端点）。
+- **越权防护**：脚本内部包含一个 `api_call` 函数供 CLI action 复用，但这是**私有实现细节，不是对外可调用的接口**。Agent 不得通过以下任何方式旁路调用白名单外的 Zoom 端点（如 `DELETE /users/{id}`、`PATCH /accounts/{id}` 等高风险端点）：
+  - 修改 `scripts/zoom-s2s.py`、新增 CLI action、暴露 `api_call`；
+  - `from zoom_s2s import api_call` 或以其他方式直接调用脚本内部函数；
+  - 在调用本 Skill 的同时**另起进程**用相同凭证调任意 Zoom REST API（如 `curl` 直接打 `api.zoom.us`）；
+  - 注入参数、拼接 URL、构造任意 JSON payload 绕过 CLI 校验逻辑。
+  脚本遵循"最小暴露面"原则：CLI 只暴露 7 个白名单 action，**任何其他调用路径都视为越权**。
 - **强人类确认**：`create_meeting` 与 `delete_meeting` 在执行前必须获得用户显式确认；`delete_meeting` 命令还需附加 `--yes` 参数。
 
 ## 凭证配置
@@ -95,6 +108,8 @@ python3 zoom-s2s.py list_users [page_size]
 | 列出最近10个历史会议 | `list_meetings <user> 10 past` |
 | 创建明天10点会议 | `create_meeting "主题" "YYYY-MM-DDT10:00:00" 60 Asia/Shanghai` |
 | 创建周期性会议 | `create_meeting "主题" "YYYY-MM-DDT20:00:00" 120 America/New_York "" 2 1 2 7` |
+| 创建月度会议（每月15号） | `create_meeting "主题" "YYYY-MM-15T10:00:00" 60 Asia/Shanghai "" 3 1 15 12` |
+| 创建月度会议（第N个周X） | `create_meeting "主题" "..." 60 ... "" 3 1 2 6 "" "" 2` |
 | 获取会议详情 | `get_meeting <id>` |
 | 删除会议 | `delete_meeting <id> --yes` |
 | 获取云录像 | `recordings <user> 10` |
@@ -122,80 +137,65 @@ python3 zoom-s2s.py list_users [page_size]
 
 ## 创建周期性会议
 
-### CLI 方式
-
-`create_meeting` 额外支持周期性参数（按位置传递）：
+`create_meeting` 通过位置参数直接支持周期性会议（**无需绕过 CLI**）：
 
 ```bash
 python3 zoom-s2s.py create_meeting "<主题>" "<start_time>" <duration> [timezone] [password] \
-  [recurrence_type] [repeat_interval] [weekly_days] [end_times] [end_date_time]
+  [recurrence_type] [repeat_interval] [weekly_days] [end_times] [end_date_time] \
+  [monthly_day] [monthly_weeks]
 ```
 
-| 参数 | 说明 | 示例 |
-|------|------|------|
-| `recurrence_type` | 1=每日, 2=每周, 3=每月 | `2` |
-| `repeat_interval` | 每几周/天重复 | `1` |
-| `weekly_days` | 周几（字符串，1=周一~7=周日）| `"2"` |
-| `end_times` | 总共几次 | `7` |
-| `end_date_time` | 结束日期（二选一）| `"2026-10-06T00:00:00Z"` |
+| 参数 | 适用 type | 说明 | 示例 |
+|------|----------|------|------|
+| `recurrence_type` | 全部 | 1=每日, 2=每周, 3=每月 | `2` |
+| `repeat_interval` | 全部 | 每几周/天/月重复 | `1` |
+| `weekly_days` | type=2, type=3+monthly_weeks | 周几字符串（1=周一~7=周日）| `"2"` 或 `"1,3,5"` |
+| `end_times` | 全部 | 总共几次 | `7` |
+| `end_date_time` | 全部 | 结束日期（二选一）| `"2026-10-06T00:00:00Z"` |
+| `monthly_day` | type=3 | 每月第几天字符串（1-31，单值或逗号分隔）| `"15"` 或 `"1,15"` |
+| `monthly_weeks` | type=3 | 每月第几个周次（-1=最后, 1-4），配合 `weekly_days` | `2` |
 
-**示例：每周二 20:00，共 7 次，每次 2 小时**
+### 示例：每周二 20:00，共 7 次，每次 2 小时
 ```bash
 python3 zoom-s2s.py create_meeting "北美龙虾 AI 数字员工系列第 2 期" \
   "2026-08-18T20:00:00" 120 America/New_York "" 2 1 2 7
 ```
 
-### API Payload 方式
+### 示例：每月 15 号 10:00，共 12 次
+```bash
+python3 zoom-s2s.py create_meeting "月度复盘" \
+  "2026-08-15T10:00:00" 60 Asia/Shanghai "" 3 1 15 12
+# positional: topic, start_time, duration, tz, password, type=3, repeat=1, weekly_days=15, end_times=12
+# 解释: monthly_day="15"（每月 15 号）
+```
 
-创建 `type=8`（周期性会议）的 `recurrence` 参数说明：
+### 示例：每月第 2 个周二 20:00，共 6 次
+```bash
+python3 zoom-s2s.py create_meeting "月度董事会" \
+  "2026-08-25T20:00:00" 60 America/New_York "" 3 1 2 6 "" "" 2
+# positional: ..., type=3, repeat=1, weekly_days="2", end_times=6, end_date_time="", monthly_day="", monthly_weeks=2
+# 解释: monthly_weeks=2 + weekly_days="2" = 每月第 2 个周二
+```
 
-| recurrence.type | 说明 | 可用字段 | 是否可用 |
-|---|---|---|---|
-| 1 | 每日循环（Daily） | `end_date_time` 或 `count` | ✅ |
-| 2 | 每周循环（Weekly） | `weekly_days`（字符串）, `end_date_time` 或 `count` | ✅ |
-| 3 | 每月循环（Monthly） | `monthly_day` 或 `monthly_weeks` + `weekly_days` | ✅ |
-
-**⚠️ 关键避坑：`weekly_days` 必须是字符串，不是数组！**
+**⚠️ 关键避坑：`weekly_days` / `monthly_day` 必须是字符串，不是数组！**
 
 | 错误写法 | 正确写法 |
 |---------|---------|
 | `"weekly_days": [6]` | `"weekly_days": "6"` |
 | `"weekly_days": ["6"]` | `"weekly_days": "6"`（单日） |
 |  | `"weekly_days": "6,0"`（多日，周六+周日） |
+|  | `"weekly_days": "1,3,5"`（周一+周三+周五） |
+| `"monthly_day": [15]` | `"monthly_day": "15"` |
+|  | `"monthly_day": "1,15"`（每月 1 号和 15 号） |
 
-**weekly_days 取值**：1=周一 ~ 7=周日
+`weekly_days` 取值：1=周一 ~ 7=周日。
 
-**示例**：通过 `api_call` 直接 POST 创建周期性会议：
-```python
-payload = {
-    "topic": "CSM公开课",
-    "type": 8,
-    "start_time": "2026-05-23T08:00:00",
-    "duration": 540,
-    "timezone": "Asia/Shanghai",
-    "recurrence": {
-        "type": 2,
-        "repeat_interval": 1,
-        "weekly_days": "6,0",   # 周六+周日，字符串！
-        "end_date_time": "2026-05-24T00:00:00Z"
-    },
-    "settings": {
-        "host_video": True,
-        "participant_video": True,
-        "join_before_host": False,
-        "mute_upon_entry": False
-    }
-}
-```
-
-**多日示例**（周一+周三+周五）：
-```python
-"weekly_days": "1,3,5"
-```
+> ❗ **禁止**：当 CLI 参数不够用时，不得构造任意 payload 直接调用 `api_call` 或另起 `curl` 调用 Zoom API。如确需新参数，应扩展 `scripts/zoom-s2s.py` 中的 CLI action 并在 PR 中说明。
 
 ## 踩坑记录
 
 1. **scope 错误 (4711)**：某些 API（如 `get_user`）需要在 App 里开通对应 scope，又如 `list_meetings` 需要在 App 里开通 `meeting:read:list_meetings` 权限
 2. **Token 有效期**：Server-to-Server Token 有效期 1 小时，脚本自动刷新并缓存
 3. **用户 ID**：可用邮箱，也可用 `list_users` 查 user_id
-4. **`weekly_days` 必须为字符串**：Zoom API 要求 `weekly_days` 是 `"6"` 这样的字符串，而非 `[6]` 数组，传数组会报 300 错误
+4. **`weekly_days` / `monthly_day` 必须为字符串**：Zoom API 要求 `weekly_days`、`monthly_day` 是 `"6"` / `"15"` 这样的字符串，而非 `[6]` / `[15]` 数组，传数组会报 300 错误（CLI 已自动 `str()`，但调用方传入时仍需注意）
+5. **月度循环的两种写法**：`monthly_day` 表示"每月第几天"，`monthly_weeks + weekly_days` 表示"每月第几个周几"。两者二选一，不要同时给；同时给会让 Zoom 拒绝（300 错误）

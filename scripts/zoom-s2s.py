@@ -140,7 +140,8 @@ def get_meeting(meeting_id):
     return api_call("GET", f"/meetings/{meeting_id}")
 
 def create_meeting(topic, start_time, duration=60, timezone="Asia/Shanghai", password=None,
-                    recurrence_type=None, repeat_interval=1, weekly_days=None, end_times=None, end_date_time=None):
+                    recurrence_type=None, repeat_interval=1, weekly_days=None, end_times=None,
+                    end_date_time=None, monthly_day=None, monthly_weeks=None):
     user = ZOOM_USER_ID
     payload = {
         "topic": topic,
@@ -159,8 +160,20 @@ def create_meeting(topic, start_time, duration=60, timezone="Asia/Shanghai", pas
         payload["password"] = password
     if recurrence_type:
         rec = {"type": recurrence_type, "repeat_interval": repeat_interval}
-        if weekly_days is not None:
+        # type=1 (daily): 用 end_date_time / end_times 即可
+        # type=2 (weekly): 必须给 weekly_days 字符串
+        if recurrence_type == 2 and weekly_days is not None:
             rec["weekly_days"] = str(weekly_days)
+        # type=3 (monthly): 二选一
+        #   - monthly_day: 每月第几天（1-31，逗号分隔字符串，如 "15" 或 "1,15"）
+        #   - monthly_weeks: 每月第几个周次（-1=最后, 1-4），配合 weekly_days
+        if recurrence_type == 3:
+            if monthly_day is not None:
+                rec["monthly_day"] = str(monthly_day)
+            elif monthly_weeks is not None:
+                rec["monthly_weeks"] = int(monthly_weeks)
+                if weekly_days is not None:
+                    rec["weekly_days"] = str(weekly_days)
         if end_times is not None:
             rec["end_times"] = int(end_times)
         if end_date_time:
@@ -191,8 +204,13 @@ def help():
   get_meeting     <meeting_id>                  获取单个会议详情
   create_meeting  <topic> <start_time> <duration> [timezone] [password]
                   [recurrence_type] [repeat_interval] [weekly_days] [end_times] [end_date_time]
+                  [monthly_day] [monthly_weeks]
                                                   创建会议 (start_time: YYYY-MM-DDTHH:MM:SS)
-                                                  支持周期性会议：recurrence_type=2(每周), weekly_days="1-7", end_times=次数
+                                                  支持周期性会议：
+                                                    recurrence_type=1 每日
+                                                    recurrence_type=2 每周，weekly_days="1-7"（如 "2" 或 "1,3,5"）
+                                                    recurrence_type=3 每月，每月几号 monthly_day="1-31"（如 "15" 或 "1,15"）
+                                                                    或 每月第几个周次 monthly_weeks=-1..4 + weekly_days
   delete_meeting  <meeting_id> --yes              删除会议（需 --yes 确认）
   get_user        [user_id]                     获取用户信息
   list_users      [page_size]                   列出账户下所有用户
@@ -208,6 +226,12 @@ def help():
 
   # 创建周期性会议（每周二 20:00，7次，2小时）
   python3 zoom-s2s.py create_meeting "北美龙虾 AI 数字员工系列第 2 期" "2026-08-18T20:00:00" 120 America/New_York "" 2 1 2 7
+
+  # 创建月度会议（每月 15 号 10:00，共 12 次）
+  python3 zoom-s2s.py create_meeting "月度复盘" "2026-08-15T10:00:00" 60 Asia/Shanghai "" 3 1 15 12
+
+  # 创建月度会议（每月第 2 个周二 20:00，共 6 次）
+  python3 zoom-s2s.py create_meeting "月度董事会" "2026-08-25T20:00:00" 60 America/New_York "" 3 1 2 6 "" "" 2
 
   # 获取云录像
   python3 zoom-s2s.py recordings service@uperform.cn 10
@@ -252,8 +276,11 @@ def main():
         weekly_days = args[7] if len(args) > 7 else None
         end_times = int(args[8]) if len(args) > 8 else None
         end_date_time = args[9] if len(args) > 9 else None
+        monthly_day = args[10] if len(args) > 10 else None
+        monthly_weeks = int(args[11]) if len(args) > 11 else None
         result = create_meeting(topic, start_time, duration, timezone, password,
-                               recurrence_type, repeat_interval, weekly_days, end_times, end_date_time)
+                               recurrence_type, repeat_interval, weekly_days, end_times,
+                               end_date_time, monthly_day, monthly_weeks)
 
     elif action == "delete_meeting":
         if len(args) < 1:
