@@ -208,7 +208,7 @@ def help():
                                                   创建会议 (start_time: YYYY-MM-DDTHH:MM:SS)
                                                   支持周期性会议：
                                                     recurrence_type=1 每日
-                                                    recurrence_type=2 每周，weekly_days="1-7"（如 "2" 或 "1,3,5"）
+                                                    recurrence_type=2 每周，weekly_days Zoom 编码："1"=周日 "2"=周一 ... "7"=周六（如 "2" 周一 或 "3,5" 周二+周四）
                                                     recurrence_type=3 每月，每月几号 monthly_day="1-31"（如 "15" 或 "1,15"）
                                                                     或 每月第几个周次 monthly_weeks=-1..4 + weekly_days
   delete_meeting  <meeting_id> --yes              删除会议（需 --yes 确认）
@@ -224,7 +224,7 @@ def help():
   # 创建明天早上10点会议
   python3 zoom-s2s.py create_meeting "煎饼果子讨论会" "2026-05-05T10:00:00" 60 Asia/Shanghai
 
-  # 创建周期性会议（每周二 20:00，7次，2小时）
+  # 创建周期性会议（每周一 20:00 EDT，7次，2小时；weekly_days="2" = Zoom 编码周一）
   python3 zoom-s2s.py create_meeting "北美龙虾 AI 数字员工系列第 2 期" "2026-08-18T20:00:00" 120 America/New_York "" 2 1 2 7
 
   # 创建月度会议（每月 15 号 10:00，共 12 次）

@@ -79,7 +79,7 @@ python3 zoom-s2s.py get_meeting <meeting_id>
 
 # 创建会议 (start_time: YYYY-MM-DDTHH:MM:SS)
 python3 zoom-s2s.py create_meeting "<主题>" "<start_time>" <时长分钟> [时区] [密码]
-# 创建周期性会议（每周二，7次，每次120分钟）
+# 创建周期性会议（每周一，7次，每次120分钟；weekly_days="2" = Zoom 编码周一）
 python3 zoom-s2s.py create_meeting "CSM公开课" "2026-05-23T08:00:00" 120 Asia/Shanghai "" 2 1 2 7
 python3 zoom-s2s.py create_meeting "煎饼果子讨论会" "2026-05-05T10:00:00" 60 Asia/Shanghai
 
@@ -107,9 +107,9 @@ python3 zoom-s2s.py list_users [page_size]
 | 列出最近5个会议 | `list_meetings <user> 5 upcoming` |
 | 列出最近10个历史会议 | `list_meetings <user> 10 past` |
 | 创建明天10点会议 | `create_meeting "主题" "YYYY-MM-DDT10:00:00" 60 Asia/Shanghai` |
-| 创建周期性会议 | `create_meeting "主题" "YYYY-MM-DDT20:00:00" 120 America/New_York "" 2 1 2 7` |
+| 创建周期性会议（每周一） | `create_meeting "主题" "YYYY-MM-DDT20:00:00" 120 America/New_York "" 2 1 2 7` |
 | 创建月度会议（每月15号） | `create_meeting "主题" "YYYY-MM-15T10:00:00" 60 Asia/Shanghai "" 3 1 15 12` |
-| 创建月度会议（第N个周X） | `create_meeting "主题" "..." 60 ... "" 3 1 2 6 "" "" 2` |
+| 创建月度会议（第N个周二） | `create_meeting "主题" "..." 60 ... "" 3 1 3 6 "" "" 2` |
 | 获取会议详情 | `get_meeting <id>` |
 | 删除会议 | `delete_meeting <id> --yes` |
 | 获取云录像 | `recordings <user> 10` |
@@ -149,16 +149,22 @@ python3 zoom-s2s.py create_meeting "<主题>" "<start_time>" <duration> [timezon
 |------|----------|------|------|
 | `recurrence_type` | 全部 | 1=每日, 2=每周, 3=每月 | `2` |
 | `repeat_interval` | 全部 | 每几周/天/月重复 | `1` |
-| `weekly_days` | type=2, type=3+monthly_weeks | 周几字符串（1=周一~7=周日）| `"2"` 或 `"1,3,5"` |
+| `weekly_days` | type=2, type=3+monthly_weeks | 周几字符串（Zoom 编码：**1=周日, 2=周一, 3=周二, ..., 7=周六**）| `"2"` = 周一, `"3,5"` = 周二+周四 |
 | `end_times` | 全部 | 总共几次 | `7` |
 | `end_date_time` | 全部 | 结束日期（二选一）| `"2026-10-06T00:00:00Z"` |
 | `monthly_day` | type=3 | 每月第几天字符串（1-31，单值或逗号分隔）| `"15"` 或 `"1,15"` |
 | `monthly_weeks` | type=3 | 每月第几个周次（-1=最后, 1-4），配合 `weekly_days` | `2` |
 
-### 示例：每周二 20:00，共 7 次，每次 2 小时
+> ⚠️ **重要：`weekly_days` 是 Zoom 编码，不是 ISO 编码。** 1=周日（不是周一）。常见误用：
+> - 想约周一 → `weekly_days="2"`（不是 `"1"`）
+> - 想约周六 → `weekly_days="7"`（不是 `"6"`）
+> - 想约周日 → `weekly_days="1"`
+
+### 示例：每周一 20:00（EDT），共 7 次，每次 2 小时
 ```bash
-python3 zoom-s2s.py create_meeting "北美龙虾 AI 数字员工系列第 2 期" \
-  "2026-08-18T20:00:00" 120 America/New_York "" 2 1 2 7
+python3 zoom-s2s.py create_meeting "每周一的产品同步" \
+  "2026-08-24T20:00:00" 120 America/New_York "" 2 1 2 7
+# weekly_days="2" = Zoom 编码 2 = 周一
 ```
 
 ### 示例：每月 15 号 10:00，共 12 次
@@ -172,23 +178,24 @@ python3 zoom-s2s.py create_meeting "月度复盘" \
 ### 示例：每月第 2 个周二 20:00，共 6 次
 ```bash
 python3 zoom-s2s.py create_meeting "月度董事会" \
-  "2026-08-25T20:00:00" 60 America/New_York "" 3 1 2 6 "" "" 2
-# positional: ..., type=3, repeat=1, weekly_days="2", end_times=6, end_date_time="", monthly_day="", monthly_weeks=2
-# 解释: monthly_weeks=2 + weekly_days="2" = 每月第 2 个周二
+  "2026-08-25T20:00:00" 60 America/New_York "" 3 1 3 6 "" "" 2
+# positional: ..., type=3, repeat=1, weekly_days="3", end_times=6, end_date_time="", monthly_day="", monthly_weeks=2
+# 解释: monthly_weeks=2 + weekly_days="3" = 每月第 2 个周二（Zoom 编码 3 = 周二）
 ```
 
 **⚠️ 关键避坑：`weekly_days` / `monthly_day` 必须是字符串，不是数组！**
 
 | 错误写法 | 正确写法 |
 |---------|---------|
-| `"weekly_days": [6]` | `"weekly_days": "6"` |
-| `"weekly_days": ["6"]` | `"weekly_days": "6"`（单日） |
-|  | `"weekly_days": "6,0"`（多日，周六+周日） |
-|  | `"weekly_days": "1,3,5"`（周一+周三+周五） |
+| `"weekly_days": [6]` | `"weekly_days": "6"`（单日） |
+| `"weekly_days": ["6"]` | `"weekly_days": "6"` |
+|  | `"weekly_days": "6,7"`（多日，**周五+周六**——Zoom 编码） |
+|  | `"weekly_days": "2,3,5"`（**周一+周二+周四**——Zoom 编码） |
+|  | `"weekly_days": "1,7"`（**周日+周六**——Zoom 编码两端） |
 | `"monthly_day": [15]` | `"monthly_day": "15"` |
 |  | `"monthly_day": "1,15"`（每月 1 号和 15 号） |
 
-`weekly_days` 取值：1=周一 ~ 7=周日。
+`weekly_days` Zoom 编码：1=周日，2=周一，3=周二，4=周三，5=周四，6=周五，7=周六。
 
 > ❗ **禁止**：当 CLI 参数不够用时，不得构造任意 payload 直接调用 `api_call` 或另起 `curl` 调用 Zoom API。如确需新参数，应扩展 `scripts/zoom-s2s.py` 中的 CLI action 并在 PR 中说明。
 
@@ -197,5 +204,5 @@ python3 zoom-s2s.py create_meeting "月度董事会" \
 1. **scope 错误 (4711)**：某些 API（如 `get_user`）需要在 App 里开通对应 scope，又如 `list_meetings` 需要在 App 里开通 `meeting:read:list_meetings` 权限
 2. **Token 有效期**：Server-to-Server Token 有效期 1 小时，脚本自动刷新并缓存
 3. **用户 ID**：可用邮箱，也可用 `list_users` 查 user_id
-4. **`weekly_days` / `monthly_day` 必须为字符串**：Zoom API 要求 `weekly_days`、`monthly_day` 是 `"6"` / `"15"` 这样的字符串，而非 `[6]` / `[15]` 数组，传数组会报 300 错误（CLI 已自动 `str()`，但调用方传入时仍需注意）
+4. **`weekly_days` / `monthly_day` 必须为字符串**：Zoom API 要求 `weekly_days`、`monthly_day` 是 `"6"` / `"15"` 这样的字符串，而非 `[6]` / `[15]` 数组，传数组会报 300 错误（CLI 已自动 `str()`，但调用方传入时仍需注意）。`weekly_days` 是 Zoom 编码（1=周日, 2=周一, ..., 7=周六），不是 ISO 编码。
 5. **月度循环的两种写法**：`monthly_day` 表示"每月第几天"，`monthly_weeks + weekly_days` 表示"每月第几个周几"。两者二选一，不要同时给；同时给会让 Zoom 拒绝（300 错误）
