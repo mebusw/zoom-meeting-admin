@@ -1,8 +1,8 @@
 ---
 name: zoom-meeting-admin
-allowed-tools: Bash(python3:*) Bash(ls:*) Bash(cat:*) Read
-compatibility: Requires Python 3.7+, network access to zoom.us and api.zoom.us, and a local .env with Zoom Server-to-Server OAuth credentials.
-description: Manage Zoom meetings, cloud recordings, and account users via a Server-to-Server OAuth REST script. Use this skill when the user wants to list, view, create, or delete a scheduled Zoom meeting; query cloud recordings for a user; or look up account users. The script exposes a fixed CLI action whitelist (list/get/create/delete meeting, get/list user, list recordings); agents must only invoke these documented actions and must not modify the script, import internal functions, or construct arbitrary Zoom API requests. create_meeting requires the agent to obtain explicit user confirmation of topic, start_time, and duration before invoking. delete_meeting is gated by a required --yes flag and the agent must display the meeting info and obtain explicit user confirmation before invoking. Requires a Zoom Server-to-Server OAuth app and a local .env with ACCOUNT_ID, CLIENT_ID, CLIENT_SECRET, USER_ID.
+allowed-tools: Bash(python3 zoom-s2s.py:*) Read
+compatibility: Requires Python 3.7+; performs HTTPS calls to zoom.us and api.zoom.us (network); writes a token cache to ~/.zoom-s2s-token.json (auto chmod 600); reads ZOOM_ACCOUNT_ID / ZOOM_CLIENT_ID / ZOOM_CLIENT_SECRET / ZOOM_USER_ID from a local .env.
+description: List, create, delete, and query Zoom meetings, cloud recordings, and account users via a fixed CLI (scripts/zoom-s2s.py, 7 whitelisted actions) using Server-to-Server OAuth. Use when the user asks to schedule, reschedule, cancel, find, or look up a Zoom meeting; set up a recurring Zoom; pull cloud recordings or past meeting metadata; or look up account users. Triggers on phrases like "Zoom meeting", "zoom 会议", "约 Zoom", "取消 Zoom", "录像", "schedule a Zoom", "cancel the meeting", "who's on the call", "云录制". create_meeting requires explicit confirmation of topic, start_time, duration; delete_meeting requires --yes and visible confirmation. Agent must only invoke the 7 whitelisted CLI actions and must not modify the script, import internals, or call Zoom REST directly. Requires .env with ACCOUNT_ID/CLIENT_ID/CLIENT_SECRET/USER_ID. Documentation is in Chinese; outputs follow.
 ---
 
 > ⚠️ **安全提示 — 凭证等同于账户管理员口令**
@@ -19,7 +19,7 @@ description: Manage Zoom meetings, cloud recordings, and account users via a Ser
 
 本 Skill 通过 `scripts/zoom-s2s.py` 调用 Zoom Server-to-Server OAuth REST API，不实现"通用 REST 代理"。
 
-- **声明的工具**：`Bash(python3:*)`（执行 `scripts/zoom-s2s.py`）、`Bash(ls:*)` / `Bash(cat:*)`（查看脚本输出与缓存）、`Read`（读取凭证文件与文档）。
+- **声明的工具**：`Bash(python3 zoom-s2s.py:*)`（仅执行本 skill 的 CLI 脚本）、`Read`（读取 SKILL.md、脚本源码、`.env.sample`、token cache 等）。
 - **网络访问**：向 `https://zoom.us/oauth/token` 与 `https://api.zoom.us/v2/*` 发起 HTTPS 请求，传输头包含 `Authorization: Bearer <token>`。
 - **文件写入**：在 `~/.zoom-s2s-token.json` 缓存访问令牌（已自动 `chmod 600`）。
 - **凭证读取**：从仓库根目录的 `.env` 读取 `ZOOM_ACCOUNT_ID` / `ZOOM_CLIENT_ID` / `ZOOM_CLIENT_SECRET` / `ZOOM_USER_ID`。
@@ -61,12 +61,26 @@ ZOOM_USER_ID=你的用户邮箱或user_id
 - **独立 App**：为此 Skill 单独创建一个 Zoom Server-to-Server App，**不要**复用其他业务 App 的凭据；一旦泄露，旋转该 App 的凭据即可，不影响其他业务。
 - **凭据泄露应急**：在 Zoom Marketplace 删除该 App → 重新创建并轮换 `ACCOUNT_ID` / `CLIENT_ID` / `CLIENT_SECRET` / `USER_ID` 四项 → `rm -f ~/.zoom-s2s-token.json` 强制下次重新认证 → 复盘泄露路径。
 
+## Out of scope（不在本 Skill 范围内）
+
+下列能力**不在**本 Skill 范围内；Agent 不应通过旁路调用 `api_call` 或 `curl` 等方式实现：
+
+- Zoom **Webinar**（与 Meeting 是不同产品，API 不同，需 `webinar:*` scope）
+- 注册表单、参会者注册管理、邮件 invite
+- Zoom Phone / Zoom Chat / Zoom Whiteboard
+- 会议期间的实时控制（mute / unmute / recording start-stop）
+- 账户/账单/SSO 配置
+- Chat 消息发送（`chat_message` 端点）
+
+如需以上能力，请走 Zoom Web UI 或 Marketplace 上的专用 App。
+
 ## 核心脚本
 
 `scripts/zoom-s2s.py` — 纯 Python，无外部依赖，兼容 Python 3.7+。
 
 ```bash
-cd ~/.agents/skills/zoom-meeting-admin/scripts
+# 调用前先 cd 到 scripts/ 目录（skill 根目录下的 scripts/ 子目录）
+cd scripts
 
 # 获取帮助
 python3 zoom-s2s.py help
@@ -95,6 +109,31 @@ python3 zoom-s2s.py get_user [user]
 # 列出账户下所有用户
 python3 zoom-s2s.py list_users [page_size]
 ```
+
+### 典型响应
+
+`create_meeting` 成功返回（节选）：
+
+```json
+{
+  "id": 85123456789,
+  "topic": "每周一的产品同步",
+  "type": 2,
+  "start_time": "2026-08-24T20:00:00Z",
+  "duration": 120,
+  "timezone": "America/New_York",
+  "join_url": "https://us05web.zoom.us/j/85123456789?pwd=...",
+  "start_url": "https://us05web.zoom.us/s/85123456789?zak=...",
+  "password": "abc123"
+}
+```
+
+**Agent 应当**：
+- 把 `join_url` 展示给用户（这是参会者链接）。
+- 把 `id`（meeting_id）记下来备用。
+- **不要**展示 `start_url`（这是主持人链接，含 host key 摘要，泄露后他人可代为启动会议）。
+
+`list_meetings` 返回 `{meetings: [...], page_count, total_records}`；`recordings` 返回 `{recording_files: [...], ...}`。
 
 ## Token 缓存
 
@@ -134,6 +173,12 @@ python3 zoom-s2s.py list_users [page_size]
 - **创建会议前**：向用户确认主题、时间、时长，再执行。
 - **删除会议前**：必须向用户明确展示会议信息并获得确认，命令需附加 `--yes` 参数。
 - **禁止超范围调用**：仅允许文档中列出的 Action，不得构造任意 Zoom REST API 请求。
+
+## 执行后验证
+
+- **create_meeting**：执行后展示返回的 `join_url` / `id` 给用户；记录 meeting_id 备用。
+- **delete_meeting**：执行后立刻 `list_meetings <user> upcoming` 验证会议已消失，并向用户报告"已删除 meeting_id=..."。
+- **任何失败**：展示原始错误（含 HTTP code + Zoom error message），**不要**把 Client Secret、access_token 或 `start_url` 写入日志/截图/对话上下文。
 
 ## 创建周期性会议
 
@@ -196,8 +241,6 @@ python3 zoom-s2s.py create_meeting "月度董事会" \
 |  | `"monthly_day": "1,15"`（每月 1 号和 15 号） |
 
 `weekly_days` Zoom 编码：1=周日，2=周一，3=周二，4=周三，5=周四，6=周五，7=周六。
-
-> ❗ **禁止**：当 CLI 参数不够用时，不得构造任意 payload 直接调用 `api_call` 或另起 `curl` 调用 Zoom API。如确需新参数，应扩展 `scripts/zoom-s2s.py` 中的 CLI action 并在 PR 中说明。
 
 ## 踩坑记录
 
